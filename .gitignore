@@ -6,3 +6,4 @@ __pygit cache__/
 
 # Игнорировать все файлы .pyc
 *.pyc
+/.venv/

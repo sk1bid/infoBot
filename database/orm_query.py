@@ -1,7 +1,11 @@
-from sqlalchemy import select, delete, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import datetime, timezone
 
-from database.models import Media
+from sqlalchemy import select, delete, update
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.testing.plugin.plugin_base import logging
+
+from database.models import Media, UserAction
 
 
 async def orm_add_media(session: AsyncSession, image: str = None, text: str = None, coins: int = 0,
@@ -63,6 +67,7 @@ async def orm_get_and_increment_coins(session: AsyncSession, media_id: int):
     await session.commit()
     return result.scalar()
 
+
 async def orm_get_and_decrement_coins(session: AsyncSession, media_id: int):
     """
     Retrieves a Media object by its ID and increments its coins by 1 in a single atomic operation.
@@ -83,3 +88,34 @@ async def orm_get_and_decrement_coins(session: AsyncSession, media_id: int):
     result = await session.execute(query)
     await session.commit()
     return result.scalar()
+
+
+async def can_user_click(session: AsyncSession, user_id: int) -> bool:
+    """
+    Проверяет, может ли пользователь нажать кнопку (не нажимал ли сегодня).
+    """
+    try:
+        query = select(UserAction).where(UserAction.user_id == user_id)
+        result = await session.execute(query)
+        user_action = result.scalar_one_or_none()
+
+        if user_action:
+            last_action_date = user_action.last_action
+            today = datetime.now(timezone.utc).date()
+            if last_action_date.date() == today:
+                return False  # Пользователь уже нажимал сегодня
+            else:
+                # Обновляем время последнего действия
+                user_action.last_action = datetime.now(timezone.utc)
+                await session.commit()
+                return True
+        else:
+            # Создаем новую запись для пользователя
+            new_action = UserAction(user_id=user_id, last_action=datetime.now(timezone.utc))
+            session.add(new_action)
+            await session.commit()
+            return True
+    except SQLAlchemyError as e:
+        logging.error(f"Ошибка при проверке действий пользователя {user_id}: {e}")
+        await session.rollback()
+        return False
